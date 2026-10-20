@@ -872,16 +872,26 @@ class CliSettingsSource(EnvSettingsSource, Generic[T]):
         count = 1
         close_delim = '}' if item.startswith('{') else ']'
         in_str = False
+        escaped = False
         for consumed in range(1, len(item)):
-            if item[consumed] == '"' and item[consumed - 1] != '\\':
+            char = item[consumed]
+            if escaped:
+                # The previous character was a backslash that is itself unescaped, so this one
+                # (a quote included) is escaped and must not change the scan state.
+                escaped = False
+                continue
+            if in_str and char == '\\':
+                escaped = True
+                continue
+            if char == '"':
                 in_str = not in_str
             elif in_str:
                 continue
-            elif item[consumed] in ('{', '['):
+            elif char in ('{', '['):
                 count += 1
-            elif item[consumed] in ('}', ']'):
+            elif char in ('}', ']'):
                 count -= 1
-                if item[consumed] == close_delim and count == 0:
+                if char == close_delim and count == 0:
                     merged_list.append(item[: consumed + 1])
                     return item[consumed + 1 :]
         raise SettingsError(f'Missing end delimiter "{close_delim}"')
@@ -889,10 +899,18 @@ class CliSettingsSource(EnvSettingsSource, Generic[T]):
     def _consume_string_or_number(self, item: str, merged_list: list[str], merge_type: type[Any] | None) -> str:
         consumed = 0 if merge_type is not str else len(item)
         is_find_end_quote = False
+        escaped = False
         while consumed < len(item):
-            if item[consumed] == '"' and (consumed == 0 or item[consumed - 1] != '\\'):
+            char = item[consumed]
+            if escaped:
+                # See `_consume_object_or_array`: an escaped character can't close the string,
+                # and a backslash that is itself escaped doesn't escape the next character.
+                escaped = False
+            elif is_find_end_quote and char == '\\':
+                escaped = True
+            elif char == '"':
                 is_find_end_quote = not is_find_end_quote
-            if not is_find_end_quote and item[consumed] == ',':
+            if not is_find_end_quote and char == ',':
                 break
             consumed += 1
         if is_find_end_quote:

@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import os
 import re
 import sys
@@ -1523,6 +1524,50 @@ def test_cli_empty_json_list_serialize_roundtrip():
 
     cfg = Cfg(values=[])
     assert CliApp.run(Cfg, cli_args=CliApp.serialize(cfg, list_style='json')) == cfg
+
+
+@pytest.mark.parametrize('value', ['C:\\temp\\', '\\\\server\\share\\', '\\\\', 'a\\"b', 'plain'])
+@pytest.mark.parametrize('nested', [False, True])
+def test_cli_dict_json_arg_with_escaped_backslashes(value, nested):
+    """A quote preceded by an escaped backslash doesn't end the JSON string that contains it."""
+
+    class Cfg(BaseSettings):
+        check_dict: dict[str, Any] = {}
+
+    payload = {'path': {'values': [value]} if nested else value}
+    assert CliApp.run(Cfg, cli_args=['--check_dict', json.dumps(payload)]).check_dict == payload
+
+
+def test_cli_dict_json_arg_with_escaped_backslash_merges_following_arg():
+    class Cfg(BaseSettings):
+        check_dict: dict[str, Any] = {}
+
+    payload = {'path': 'C:\\temp\\'}
+    args = ['--check_dict', f'{json.dumps(payload)},other=value']
+    assert CliApp.run(Cfg, cli_args=args).check_dict == {**payload, 'other': 'value'}
+
+
+@pytest.mark.parametrize('value', ['C:\\temp\\', '\\\\', 'a,b', 'plain'])
+def test_cli_dict_quoted_arg_with_escaped_backslash(value):
+    """A quoted `key=value` argument ends at its closing quote, not at an escaped backslash.
+
+    The quoted content is taken literally, so the escapes written inside the quotes stay in the value.
+    """
+
+    class Cfg(BaseSettings):
+        check_dict: dict[str, str] = {}
+
+    escaped = json.dumps(value)[1:-1]
+    args = ['--check_dict', f'path="{escaped}",other=value']
+    assert CliApp.run(Cfg, cli_args=args).check_dict == {'path': escaped, 'other': 'value'}
+
+
+def test_cli_serialize_roundtrip_with_escaped_backslash():
+    class Cfg(BaseSettings):
+        check_dict: dict[str, str] = {}
+
+    cfg = Cfg(check_dict={'path': 'C:\\temp\\'})
+    assert CliApp.run(Cfg, cli_args=CliApp.serialize(cfg)) == cfg
 
 
 class _MQTTVersion(IntEnum):
